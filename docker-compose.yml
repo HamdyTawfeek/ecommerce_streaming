@@ -1,0 +1,79 @@
+version: "3"
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.3.2
+    container_name: zookeeper
+    ports:
+      - "22181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: "2181"
+
+  kafka_broker:
+    image: confluentinc/cp-kafka:7.3.2
+    container_name: kafka_broker
+    hostname: kafka_broker
+    ports:
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 0
+      KAFKA_ZOOKEEPER_CONNECT: "zookeeper:2181"
+      KAFKA_ADVERTISED_LISTENERS: "INTERNAL://kafka_broker:19092,EXTERNAL://${DOCKER_HOST_IP:-127.0.0.1}:29092"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "INTERNAL"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: "true"
+    depends_on:
+      - "zookeeper"
+
+  kafka_producer:
+    container_name: kafka_producer
+    hostname: kafka_producer
+    build:
+      context: producer
+    environment:
+      BROKER_URL: kafka_broker:19092
+      TOPIC_NAME: zeal_purchases
+    depends_on:
+      - kafka_broker
+
+  postgres_db:
+    image: postgres
+    restart: on-failure
+    environment:
+      POSTGRES_USER: grafana_user
+      POSTGRES_PASSWORD: 1234
+      POSTGRES_DB: grafana
+    ports:
+      - "5432:5432"
+
+  faust_app:
+    container_name: faust_app
+    hostname: faust_app
+    build:
+      context: consumer
+    restart: on-failure
+    environment:
+      BROKER_URL: kafka_broker:19092
+      TOPIC_NAME: zeal_purchases
+      DATABASE_URL: postgresql://grafana_user:1234@postgres_db:5432/grafana
+      TABLE_NAME: purchase_summmary
+    depends_on:
+      - postgres_db
+      - kafka_broker
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: unless-stopped
+    environment:
+      - TERM=linux
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-polystat-panel
+    ports:
+      - '3000:3000'
+    volumes:
+      - './grafana-data:/var/lib/grafana'
+    depends_on:
+      - postgres_db
+
+volumes:
+  grafana-data:
